@@ -1,19 +1,39 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
-require_login();
+require_manager();
 
 $pdo = db();
 $type = (string) ($_GET['type'] ?? 'students');
 $stamp = date('Ymd');
 
 if ($type === 'students') {
-    $rows = $pdo->query(
+    $activeSy = setting('school_year', '');
+    $studentSql =
         "SELECT s.*,
             (SELECT COUNT(*) FROM credentials c WHERE c.student_id = s.id AND c.status = 'Complete') AS cred_done,
             (SELECT COUNT(*) FROM credentials c WHERE c.student_id = s.id AND c.status <> 'N/A') AS cred_total
-         FROM students s ORDER BY s.last_name, s.first_name"
-    )->fetchAll();
+         FROM students s";
+    $studentParams = [];
+    if ($activeSy !== '') {
+        $studentSql .= ' WHERE s.school_year = :sy';
+        $studentParams[':sy'] = $activeSy;
+    }
+    $studentSql .= " ORDER BY CAST(REPLACE(s.grade_level, 'Grade ', '') AS INTEGER) ASC,
+            CASE WHEN s.strand IS NULL OR s.strand = '' THEN 0
+                WHEN s.strand = 'STEM' THEN 1
+                WHEN s.strand = 'ABM' THEN 2
+                WHEN s.strand = 'HUMSS' THEN 3
+                WHEN s.strand = 'GAS' THEN 4
+                WHEN s.strand = 'TVL' THEN 5
+                ELSE 6 END ASC,
+            COALESCE(s.strand, '') COLLATE NOCASE ASC,
+            COALESCE(s.section, '') COLLATE NOCASE ASC,
+            s.last_name COLLATE NOCASE ASC,
+            s.first_name COLLATE NOCASE ASC";
+    $studentStmt = $pdo->prepare($studentSql);
+    $studentStmt->execute($studentParams);
+    $rows = $studentStmt->fetchAll();
 
     $out = [];
     foreach ($rows as $s) {

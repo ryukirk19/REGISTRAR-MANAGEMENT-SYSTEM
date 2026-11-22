@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $old['status'], current_user()['id'],
             ]);
             log_activity('Follow-up logged', $old['method'] . ' follow-up for ' . $student['record_code'] . ': ' . $old['concern']);
-            flash('success', 'Follow-up logged for ' . $student['first_name'] . ' ' . $student['last_name'] . '.');
+            flash('success', 'Follow-up logged for ' . student_name($student) . '.');
             redirect('followups.php');
         }
     }
@@ -185,7 +185,7 @@ app_header('Follow-up log', 'followups.php');
                 ?>
                     <tr>
                         <td>
-                            <a class="strong" href="/student.php?id=<?= (int) $f['student_id'] ?>"><?= e($f['first_name'] . ' ' . $f['last_name']) ?></a>
+                            <a class="strong" href="/student.php?id=<?= (int) $f['student_id'] ?>"><?= e(student_name($f)) ?></a>
                             <span class="sub"><?= e($f['record_code']) ?> · <?= e($f['grade_level']) ?></span>
                         </td>
                         <td>
@@ -254,7 +254,7 @@ app_header('Follow-up log', 'followups.php');
                         <option value="">Select a student…</option>
                         <?php foreach (student_options() as $s): ?>
                             <option value="<?= (int) $s['id'] ?>" <?= (string) $old['student_id'] === (string) $s['id'] ? 'selected' : '' ?>>
-                                <?= e($s['last_name'] . ', ' . $s['first_name'] . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
+                                <?= e(student_name($s) . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

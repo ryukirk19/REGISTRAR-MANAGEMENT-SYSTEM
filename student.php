@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/layout.php';
-require_login();
+require_manager();
 
 $pdo = db();
 $id = (int) ($_GET['id'] ?? 0);
@@ -12,6 +12,10 @@ if (!$student) {
     redirect('students.php');
 }
 
+$storageCabinets = storage_cabinets();
+$storageShelves = storage_shelves();
+$storageFolders = storage_folders();
+
 $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -19,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string) ($_POST['action'] ?? '');
     $actor = current_user();
 
-    if (in_array($action, ['update', 'credential', 'upload', 'remove_scan'], true) && !can_manage()) {
+    if (in_array($action, ['update', 'credential', 'upload', 'remove_scan', 'delete'], true) && !can_manage()) {
         http_response_code(403);
         exit('Registrar-level access is required for this action.');
     }
@@ -80,6 +84,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($fields['status'], student_statuses(), true)) {
             $errors['status'] = 'Select a valid status.';
         }
+        $storageError = storage_validate($fields, $id);
+        if ($storageError !== null) {
+            $errors['folder_no'] = $storageError;
+        }
 
         if (!$errors) {
             $stmt = $pdo->prepare(
@@ -127,6 +135,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash('success', 'Digital scan removed.');
         redirect('student.php?id=' . $id);
     }
+
+    if ($action === 'delete') {
+        $recordCode = $student['record_code'];
+        $studentName = full_name($student);
+        if ($student['digital_path'] && is_file(SCAN_DIR . '/' . $student['digital_path'])) {
+            @unlink(SCAN_DIR . '/' . $student['digital_path']);
+        }
+        $pdo->prepare('DELETE FROM students WHERE id = ?')->execute([$id]);
+        log_activity('Student record deleted', $recordCode . ' removed (' . $studentName . ')');
+        flash('success', 'Record ' . $recordCode . ' was permanently deleted.');
+        redirect('students.php');
+    }
 }
 
 $student = fetch_student($id);
@@ -139,7 +159,7 @@ foreach ($creds->fetchAll() as $c) {
 }
 
 $requests = $pdo->prepare(
-    "SELECT r.*, u.full_name AS assigned_name FROM requests r
+    "SELECT r.*, u.full_name AS assigned_name, u.first_name AS assigned_first_name, u.middle_name AS assigned_middle_name, u.last_name AS assigned_last_name FROM requests r
      LEFT JOIN users u ON u.id = r.assigned_to
      WHERE r.student_id = ? ORDER BY r.date_requested DESC, r.id DESC LIMIT 6"
 );
@@ -177,18 +197,24 @@ $timeline = array_slice($timeline, 0, 8);
 
 $form = $errors ? array_merge($student, $_POST) : $student;
 
-app_header(full_name($student), 'students.php');
+app_header(student_name($student), 'students.php');
 ?>
 <div class="page-head" style="margin-bottom:18px">
     <div>
         <div class="eyebrow">Record <?= e($student['record_code']) ?></div>
-        <h1><?= e(full_name($student)) ?></h1>
+        <h1><?= e(student_name($student)) ?></h1>
         <p class="page-sub">Complete record file, credential checklist, and activity for this student.</p>
     </div>
     <div class="page-actions">
         <a class="btn btn-ghost" href="/students.php"><?= icon('records') ?> Back to index</a>
+        <a class="btn btn-ghost" href="/certificate_enrollment.php?id=<?= $id ?>" target="_blank" rel="noopener"><?= icon('cert') ?> Enrollment certificate</a>
         <?php if (can_manage()): ?>
             <button class="btn btn-primary" type="button" data-dialog-open="#editStudent"><?= icon('edit') ?> Edit record</button>
+            <form method="post" action="/student.php?id=<?= $id ?>" class="inline-form">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="delete">
+                <button class="btn btn-danger" type="submit" data-confirm="Delete this student record permanently? Their credential checklist, requests, certificates, and transfers will also be removed."><?= icon('x') ?> Delete record</button>
+            </form>
         <?php endif; ?>
     </div>
 </div>
@@ -196,7 +222,7 @@ app_header(full_name($student), 'students.php');
 <section class="profile-hero" style="margin-bottom:18px">
     <div class="profile-avatar"><?= e(initials(full_name($student))) ?></div>
     <div class="profile-id">
-        <h1><?= e(full_name($student)) ?></h1>
+        <h1><?= e(student_name($student)) ?></h1>
         <div class="meta">
             <?= status_pill($student['status']) ?>
             <span class="code-tag"><?= e($student['record_code']) ?></span>
@@ -301,7 +327,7 @@ app_header(full_name($student), 'students.php');
                             <tr>
                                 <td><span class="code-tag"><?= e($r['request_no']) ?></span></td>
                                 <td><?= e($r['document_type']) ?></td>
-                                <td><?= e($r['assigned_name'] ?: 'Unassigned') ?></td>
+                                <td><?= e($r['assigned_name'] ? account_name(['first_name' => $r['assigned_first_name'], 'middle_name' => $r['assigned_middle_name'], 'last_name' => $r['assigned_last_name'], 'full_name' => $r['assigned_name']]) : 'Unassigned') ?></td>
                                 <td><?= status_pill($r['status']) ?></td>
                                 <td class="right num"><?= e(fmt_date($r['date_requested'], 'M j, Y')) ?></td>
                             </tr>
@@ -475,16 +501,16 @@ app_header(full_name($student), 'students.php');
             <div class="form-grid">
                 <div class="field <?= isset($errors['first_name']) ? 'has-error' : '' ?>">
                     <label for="e_first">First name</label>
-                    <input type="text" id="e_first" name="first_name" value="<?= e((string) ($form['first_name'] ?? '')) ?>">
+                    <input type="text" id="e_first" name="first_name" value="<?= e((string) ($form['first_name'] ?? '')) ?>" required>
                     <?php if (isset($errors['first_name'])): ?><span class="error"><?= e($errors['first_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
-                    <label for="e_middle">Middle name</label>
-                    <input type="text" id="e_middle" name="middle_name" value="<?= e((string) ($form['middle_name'] ?? '')) ?>">
+                    <label for="e_middle">Middle name (optional)</label>
+                    <input type="text" id="e_middle" name="middle_name" value="<?= e((string) ($form['middle_name'] ?? '')) ?>" placeholder="Leave blank if none">
                 </div>
                 <div class="field <?= isset($errors['last_name']) ? 'has-error' : '' ?>">
                     <label for="e_last">Last name</label>
-                    <input type="text" id="e_last" name="last_name" value="<?= e((string) ($form['last_name'] ?? '')) ?>">
+                    <input type="text" id="e_last" name="last_name" value="<?= e((string) ($form['last_name'] ?? '')) ?>" required>
                     <?php if (isset($errors['last_name'])): ?><span class="error"><?= e($errors['last_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
@@ -547,19 +573,57 @@ app_header(full_name($student), 'students.php');
                     <input type="text" id="e_addr" name="address" value="<?= e((string) ($form['address'] ?? '')) ?>">
                 </div>
                 <div class="field-set">
-                    <?= icon('pin') ?><span>Update the physical location whenever a folder is refiled.</span>
+                    <?= icon('cabinet') ?><span>Filing follows the vault: the cabinet matches the student's grade level, the shelf is the section, and the folder belongs to one student. <a href="/cabinets.php" target="_blank" rel="noopener">Manage cabinets and shelves</a>.</span>
                 </div>
                 <div class="field">
-                    <label for="e_cab">Cabinet</label>
-                    <input type="text" id="e_cab" name="cabinet" value="<?= e((string) ($form['cabinet'] ?? '')) ?>">
+                    <label for="e_cab">Cabinet (grade level)</label>
+                    <select id="e_cab" name="cabinet" data-storage-cabinet>
+                        <option value="">— Not filed —</option>
+                        <?php foreach ($storageCabinets as $cab): ?>
+                            <option value="<?= e($cab['code']) ?>"
+                                data-grade="<?= e((string) ($cab['grade_level'] ?? '')) ?>"
+                                <?= ($form['cabinet'] ?? '') === $cab['code'] ? 'selected' : '' ?>>
+                                <?= e($cab['code'] . (trim((string) ($cab['grade_level'] ?? '')) !== '' ? ' · ' . $cab['grade_level'] : '')) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div class="field">
-                    <label for="e_shelf">Shelf</label>
-                    <input type="text" id="e_shelf" name="shelf" value="<?= e((string) ($form['shelf'] ?? '')) ?>">
+                    <label for="e_shelf">Shelf (section)</label>
+                    <select id="e_shelf" name="shelf" data-storage-shelf>
+                        <option value="">— Select cabinet —</option>
+                        <?php foreach ($storageShelves as $shelf): ?>
+                            <option value="<?= e($shelf['code']) ?>"
+                                data-cabinet="<?= e($shelf['cabinet_code']) ?>"
+                                data-section="<?= e((string) ($shelf['section'] ?? '')) ?>"
+                                data-grade="<?= e((string) ($shelf['grade_level'] ?? '')) ?>"
+                                data-strand="<?= e((string) ($shelf['strand'] ?? '')) ?>"
+                                <?= ($form['cabinet'] ?? '') === $shelf['cabinet_code'] && ($form['shelf'] ?? '') === $shelf['code'] ? 'selected' : '' ?>>
+                                <?= e($shelf['code'] . ($shelf['section'] ? ' — ' . $shelf['section'] : ' — unreserved')) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div class="field">
-                    <label for="e_folder">Folder number</label>
-                    <input type="text" id="e_folder" name="folder_no" value="<?= e((string) ($form['folder_no'] ?? '')) ?>">
+                    <label for="e_folder">Folder (student)</label>
+                    <select id="e_folder" name="folder_no" data-storage-folder>
+                        <option value="">— Select shelf —</option>
+                        <?php foreach ($storageFolders as $folder):
+                            $occupant = trim((string) ($folder['occupant'] ?? ''));
+                            $isCurrent = ($form['cabinet'] ?? '') === $folder['cabinet_code'] && ($form['shelf'] ?? '') === $folder['shelf_code'] && ($form['folder_no'] ?? '') === $folder['number'];
+                            $isTaken = $occupant !== '' && !$isCurrent;
+                        ?>
+                            <option value="<?= e($folder['number']) ?>"
+                                data-cabinet="<?= e($folder['cabinet_code']) ?>"
+                                data-shelf="<?= e($folder['shelf_code']) ?>"
+                                data-taken="<?= $isTaken ? '1' : '0' ?>"
+                                <?= $isCurrent ? 'selected' : '' ?>
+                                <?= $isTaken ? 'disabled' : '' ?>>
+                                Folder <?= e($folder['number']) ?> · <?= $occupant !== '' ? e($occupant) : 'Empty' ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php if (isset($errors['folder_no'])): ?><span class="error"><?= e($errors['folder_no']) ?></span><?php endif; ?>
                 </div>
                 <div class="field span-2">
                     <label for="e_notes">Notes</label>

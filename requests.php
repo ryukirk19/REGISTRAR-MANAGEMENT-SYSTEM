@@ -7,7 +7,17 @@ require_login();
 $pdo = db();
 $errors = [];
 $openModal = isset($_GET['new']);
-$staff = $pdo->query("SELECT id, full_name, role FROM users WHERE is_active = 1 ORDER BY full_name")->fetchAll();
+$returnTo = '/requests.php';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $candidate = (string) ($_POST['return'] ?? '');
+    if (preg_match('~^/requests\.php(\?[^#]*)?$~', $candidate)) {
+        $query = [];
+        parse_str((string) parse_url($candidate, PHP_URL_QUERY), $query);
+        unset($query['focus'], $query['new']);
+        $returnTo = '/requests.php' . ($query ? '?' . http_build_query($query) : '');
+    }
+}
+$staff = $pdo->query("SELECT id, first_name, middle_name, last_name, full_name, role FROM users WHERE is_active = 1 ORDER BY full_name")->fetchAll();
 $studentList = student_options();
 $preselectStudent = (int) ($_GET['student'] ?? 0);
 $old = [
@@ -66,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             log_activity('Request logged', $requestNo . ' · ' . $old['document_type'] . ' for ' . $student['record_code']);
             flash('success', $requestNo . ' was logged and assigned for processing.');
-            redirect('requests.php?focus=' . (int) $pdo->lastInsertId());
+            redirect($returnTo);
         }
     }
 
@@ -83,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             log_activity('Request updated', $req['request_no'] . ' marked ' . $next);
             flash('success', $req['request_no'] . ' is now "' . $next . '".');
         }
-        redirect('requests.php?focus=' . $reqId);
+        redirect($returnTo);
     }
 
     if ($action === 'update') {
@@ -102,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!in_array($status, request_statuses(), true)) {
             flash('error', 'Unknown request status.');
-            redirect('requests.php?focus=' . $reqId);
+            redirect($returnTo);
         }
         if ($status === 'Released' && $released === '') {
             $released = $req['date_released'] ?: today();
@@ -114,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$status, $assigned, $remarks, $released ?: null, $reqId]);
         log_activity('Request updated', $req['request_no'] . ' set to ' . $status);
         flash('success', $req['request_no'] . ' updated.');
-        redirect('requests.php?focus=' . $reqId);
+        redirect($returnTo);
     }
 }
 
@@ -159,7 +169,7 @@ $page = min($page, $totalPages);
 
 $stmt = $pdo->prepare(
     "SELECT r.*, s.first_name, s.middle_name, s.last_name, s.grade_level, s.section, s.record_code, s.lrn,
-            u.full_name AS assigned_name
+            u.full_name AS assigned_name, u.first_name AS assigned_first_name, u.middle_name AS assigned_middle_name, u.last_name AS assigned_last_name
      FROM requests r
      JOIN students s ON s.id = r.student_id
      LEFT JOIN users u ON u.id = r.assigned_to
@@ -179,7 +189,7 @@ foreach ($rows as $r) {
 }
 if ($focusId && !$focusRow) {
     $stmt = $pdo->prepare(
-        "SELECT r.*, s.first_name, s.middle_name, s.last_name, s.grade_level, s.section, s.record_code, s.lrn, u.full_name AS assigned_name
+        "SELECT r.*, s.first_name, s.middle_name, s.last_name, s.grade_level, s.section, s.record_code, s.lrn, u.full_name AS assigned_name, u.first_name AS assigned_first_name, u.middle_name AS assigned_middle_name, u.last_name AS assigned_last_name
          FROM requests r JOIN students s ON s.id = r.student_id LEFT JOIN users u ON u.id = r.assigned_to WHERE r.id = ?"
     );
     $stmt->execute([$focusId]);
@@ -188,9 +198,10 @@ if ($focusId && !$focusRow) {
 
 $studentFilterName = '';
 if ($studentFilter) {
-    $stmt = $pdo->prepare('SELECT first_name, last_name FROM students WHERE id = ?');
+    $stmt = $pdo->prepare('SELECT first_name, middle_name, last_name FROM students WHERE id = ?');
     $stmt->execute([$studentFilter]);
-    $studentFilterName = (string) $stmt->fetchColumn() ?: '';
+    $row = $stmt->fetch();
+    $studentFilterName = $row ? student_name($row) : '';
 }
 
 $qs = $_GET;
@@ -236,7 +247,7 @@ app_header('Document requests', 'requests.php');
         <select class="select-inline" name="assigned">
             <option value="0">Any staff member</option>
             <?php foreach ($staff as $u): ?>
-                <option value="<?= (int) $u['id'] ?>" <?= $assignedFilter === (int) $u['id'] ? 'selected' : '' ?>><?= e($u['full_name']) ?></option>
+                <option value="<?= (int) $u['id'] ?>" <?= $assignedFilter === (int) $u['id'] ? 'selected' : '' ?>><?= e(account_name($u)) ?></option>
             <?php endforeach; ?>
         </select>
         <button class="btn btn-ghost btn-sm" type="submit"><?= icon('search') ?> Search</button>
@@ -266,20 +277,21 @@ app_header('Document requests', 'requests.php');
                             <span class="sub"><?= e(fmt_date($r['date_requested'], 'M j, Y')) ?></span>
                         </td>
                         <td>
-                            <a class="strong" href="/student.php?id=<?= (int) $r['student_id'] ?>"><?= e($r['first_name'] . ' ' . $r['last_name']) ?></a>
+                            <a class="strong" href="/student.php?id=<?= (int) $r['student_id'] ?>"><?= e(student_name($r)) ?></a>
                             <span class="sub"><?= e($r['grade_level']) ?> · <?= e($r['record_code']) ?></span>
                         </td>
                         <td>
                             <span style="font-weight:500"><?= e($r['document_type']) ?></span>
                             <span class="sub"><?= e($r['purpose'] ?: '—') ?></span>
                         </td>
-                        <td><?= e($r['assigned_name'] ?: 'Unassigned') ?></td>
+                        <td><?= e($r['assigned_name'] ? account_name(['first_name' => $r['assigned_first_name'], 'middle_name' => $r['assigned_middle_name'], 'last_name' => $r['assigned_last_name'], 'full_name' => $r['assigned_name']]) : 'Unassigned') ?></td>
                         <td class="num"><?= $r['date_needed'] ? e(fmt_date($r['date_needed'], 'M j')) : '—' ?><?php if ($r['status'] !== 'Released' && $r['status'] !== 'Cancelled' && $r['date_needed'] && $r['date_needed'] < today()): ?><span class="sub" style="color:var(--danger)">Overdue</span><?php endif; ?></td>
                         <td><?= status_pill($r['status']) ?></td>
                         <td class="actions">
                             <?php if ($next): ?>
                                 <form method="post" action="/requests.php" class="inline-form">
                                     <?= csrf_field() ?>
+                                    <input type="hidden" name="return" value="<?= e($_SERVER['REQUEST_URI'] ?? '/requests.php') ?>">
                                     <input type="hidden" name="action" value="advance">
                                     <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
                                     <button class="btn btn-sm btn-accent" type="submit" title="Move to <?= e($next) ?>"><?= e($next) ?></button>
@@ -315,12 +327,13 @@ app_header('Document requests', 'requests.php');
 <dialog class="modal modal-sm" id="req-<?= (int) $r['id'] ?>-modal" data-autopen="<?= ($focusId === (int) $r['id']) ? '1' : '0' ?>">
     <form method="post" action="/requests.php?focus=<?= (int) $r['id'] ?>">
         <?= csrf_field() ?>
+        <input type="hidden" name="return" value="<?= e($_SERVER['REQUEST_URI'] ?? '/requests.php') ?>">
         <input type="hidden" name="action" value="update">
         <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
         <div class="modal-head">
             <div>
                 <h2><?= e($r['request_no']) ?></h2>
-                <p><?= e($r['document_type']) ?> · <?= e($r['first_name'] . ' ' . $r['last_name']) ?></p>
+                <p><?= e($r['document_type']) ?> · <?= e(student_name($r)) ?></p>
             </div>
             <button class="icon-btn modal-close" type="button" data-dialog-close aria-label="Close"><?= icon('x') ?></button>
         </div>
@@ -347,7 +360,7 @@ app_header('Document requests', 'requests.php');
                     <select id="as-<?= (int) $r['id'] ?>" name="assigned_to">
                         <option value="0">Unassigned</option>
                         <?php foreach ($staff as $u): ?>
-                            <option value="<?= (int) $u['id'] ?>" <?= (int) $r['assigned_to'] === (int) $u['id'] ? 'selected' : '' ?>><?= e($u['full_name']) ?></option>
+                            <option value="<?= (int) $u['id'] ?>" <?= (int) $r['assigned_to'] === (int) $u['id'] ? 'selected' : '' ?>><?= e(account_name($u)) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -377,7 +390,7 @@ app_header('Document requests', 'requests.php');
 <?php if ($focusRow && !in_array($focusRow['id'], array_column($rows, 'id'), true)): ?>
 <dialog class="modal modal-sm" id="focusRequest" data-autopen="1">
     <div class="modal-head">
-        <div><h2><?= e($focusRow['request_no']) ?></h2><p><?= e($focusRow['document_type']) ?> · <?= e($focusRow['first_name'] . ' ' . $focusRow['last_name']) ?></p></div>
+        <div><h2><?= e($focusRow['request_no']) ?></h2><p><?= e($focusRow['document_type']) ?> · <?= e(student_name($focusRow)) ?></p></div>
         <button class="icon-btn modal-close" type="button" data-dialog-close aria-label="Close"><?= icon('x') ?></button>
     </div>
     <div class="modal-body">
@@ -387,7 +400,7 @@ app_header('Document requests', 'requests.php');
             <div class="detail"><dt>Released</dt><dd><?= $focusRow['date_released'] ? e(fmt_date($focusRow['date_released'])) : 'Not yet' ?></dd></div>
             <div class="detail"><dt>Requester</dt><dd><?= e($focusRow['requester_name']) ?></dd></div>
             <div class="detail"><dt>Fee</dt><dd><?= e(fmt_money((float) $focusRow['fee'])) ?></dd></div>
-            <div class="detail"><dt>Assigned</dt><dd><?= e($focusRow['assigned_name'] ?: 'Unassigned') ?></dd></div>
+            <div class="detail"><dt>Assigned</dt><dd><?= e($focusRow['assigned_name'] ? account_name(['first_name' => $focusRow['assigned_first_name'], 'middle_name' => $focusRow['assigned_middle_name'], 'last_name' => $focusRow['assigned_last_name'], 'full_name' => $focusRow['assigned_name']]) : 'Unassigned') ?></dd></div>
             <div class="detail"><dt>Student</dt><dd><a href="/student.php?id=<?= (int) $focusRow['student_id'] ?>"><?= e($focusRow['record_code']) ?></a></dd></div>
         </dl>
         <?php if ($focusRow['remarks']): ?><p class="section-sub" style="margin-top:14px"><?= e($focusRow['remarks']) ?></p><?php endif; ?>
@@ -398,6 +411,7 @@ app_header('Document requests', 'requests.php');
 <dialog class="modal" id="newRequest" data-autopen="<?= $openModal ? '1' : '0' ?>">
     <form method="post" action="/requests.php" novalidate>
         <?= csrf_field() ?>
+        <input type="hidden" name="return" value="<?= e($_SERVER['REQUEST_URI'] ?? '/requests.php') ?>">
         <input type="hidden" name="action" value="create">
         <div class="modal-head">
             <div>
@@ -417,7 +431,7 @@ app_header('Document requests', 'requests.php');
                         <option value="">Select a student…</option>
                         <?php foreach ($studentList as $s): ?>
                             <option value="<?= (int) $s['id'] ?>" <?= (string) $old['student_id'] === (string) $s['id'] ? 'selected' : '' ?>>
-                                <?= e($s['last_name'] . ', ' . $s['first_name'] . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
+                                <?= e(student_name($s) . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -457,7 +471,7 @@ app_header('Document requests', 'requests.php');
                     <select id="assigned_to" name="assigned_to">
                         <option value="">Unassigned</option>
                         <?php foreach ($staff as $u): ?>
-                            <option value="<?= (int) $u['id'] ?>" <?= (string) $old['assigned_to'] === (string) $u['id'] ? 'selected' : '' ?>><?= e($u['full_name']) ?></option>
+                            <option value="<?= (int) $u['id'] ?>" <?= (string) $old['assigned_to'] === (string) $u['id'] ? 'selected' : '' ?>><?= e(account_name($u)) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>

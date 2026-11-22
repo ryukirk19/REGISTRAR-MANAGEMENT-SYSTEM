@@ -10,7 +10,7 @@ $errors = [];
 $editErrors = [];
 $openCreate = isset($_GET['new']);
 $editId = (int) ($_GET['edit'] ?? 0);
-$old = ['username' => '', 'full_name' => '', 'role' => 'staff', 'email' => ''];
+$old = ['username' => '', 'first_name' => '', 'middle_name' => '', 'last_name' => '', 'role' => 'staff', 'email' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
@@ -22,6 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $password = (string) ($_POST['password'] ?? '');
         $openCreate = true;
+        $fullName = preg_replace('/\s+/', ' ', trim($old['first_name'] . ' ' . $old['middle_name'] . ' ' . $old['last_name']));
 
         if (!preg_match('/^[a-zA-Z0-9._-]{3,32}$/', $old['username'])) {
             $errors['username'] = 'Use 3–32 letters, numbers, dots, dashes, or underscores.';
@@ -32,8 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors['username'] = 'That username is already taken.';
             }
         }
-        if ($old['full_name'] === '') {
-            $errors['full_name'] = 'Full name is required.';
+        if ($old['first_name'] === '') {
+            $errors['first_name'] = 'First name is required.';
+        }
+        if ($old['last_name'] === '') {
+            $errors['last_name'] = 'Surname is required.';
         }
         if (!isset($roles[$old['role']])) {
             $errors['role'] = 'Choose a valid role.';
@@ -46,10 +50,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!$errors) {
-            $stmt = $pdo->prepare('INSERT INTO users (username, password_hash, full_name, role, email) VALUES (?, ?, ?, ?, ?)');
-            $stmt->execute([$old['username'], password_hash($password, PASSWORD_DEFAULT), $old['full_name'], $old['role'], $old['email']]);
+            $stmt = $pdo->prepare('INSERT INTO users (username, password_hash, full_name, first_name, middle_name, last_name, role, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([$old['username'], password_hash($password, PASSWORD_DEFAULT), $fullName, $old['first_name'], $old['middle_name'], $old['last_name'], $old['role'], $old['email']]);
             log_activity('User account created', $old['username'] . ' · ' . $roles[$old['role']]);
-            flash('success', 'Account for ' . $old['full_name'] . ' created.');
+            flash('success', 'Account for ' . account_name($old) . ' created.');
             redirect('users.php');
         }
     }
@@ -63,14 +67,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('error', 'User not found.');
             redirect('users.php');
         }
-        $fullName = trim((string) ($_POST['full_name'] ?? ''));
+        $firstName = trim((string) ($_POST['first_name'] ?? ''));
+        $middleName = trim((string) ($_POST['middle_name'] ?? ''));
+        $lastName = trim((string) ($_POST['last_name'] ?? ''));
+        $fullName = preg_replace('/\s+/', ' ', trim($firstName . ' ' . $middleName . ' ' . $lastName));
         $email = trim((string) ($_POST['email'] ?? ''));
         $role = (string) ($_POST['role'] ?? '');
         $isActive = isset($_POST['is_active']) ? 1 : 0;
         $newPassword = (string) ($_POST['password'] ?? '');
 
-        if ($fullName === '') {
-            $editErrors['full_name'] = 'Full name is required.';
+        if ($firstName === '') {
+            $editErrors['first_name'] = 'First name is required.';
+        }
+        if ($lastName === '') {
+            $editErrors['last_name'] = 'Surname is required.';
         }
         if (!isset($roles[$role])) {
             $editErrors['role'] = 'Choose a valid role.';
@@ -93,8 +103,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$editErrors) {
             $pdo->beginTransaction();
-            $stmt = $pdo->prepare('UPDATE users SET full_name = ?, email = ?, role = ?, is_active = ? WHERE id = ?');
-            $stmt->execute([$fullName, $email, $role, $isActive, $userId]);
+            $stmt = $pdo->prepare('UPDATE users SET full_name = ?, first_name = ?, middle_name = ?, last_name = ?, email = ?, role = ?, is_active = ? WHERE id = ?');
+            $stmt->execute([$fullName, $firstName, $middleName, $lastName, $email, $role, $isActive, $userId]);
             if ($newPassword !== '') {
                 $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($newPassword, PASSWORD_DEFAULT), $userId]);
             }
@@ -157,7 +167,7 @@ app_header('User accounts', 'users.php');
                         <div class="name-cell">
                             <span class="avatar-sm accent"><?= e(initials($u['full_name'])) ?></span>
                             <span>
-                                <span class="strong"><?= e($u['full_name']) ?></span>
+                                <span class="strong"><?= e(account_name($u)) ?></span>
                                 <span class="sub"><?= e($u['email'] ?: 'No email on file') ?></span>
                             </span>
                         </div>
@@ -183,7 +193,8 @@ app_header('User accounts', 'users.php');
 
 <?php foreach ($users as $u):
     $isSelf = (int) $u['id'] === (int) current_user()['id'];
-    $vals = ($editId === (int) $u['id'] && $editErrors) ? array_merge($u, $_POST) : $u;
+    $isEditTarget = $editId === (int) $u['id'];
+    $vals = ($isEditTarget && $editErrors) ? array_merge($u, $_POST) : $u;
 ?>
 <dialog class="modal modal-sm" id="editUser-<?= (int) $u['id'] ?>" data-autopen="<?= ($editId === (int) $u['id']) ? '1' : '0' ?>">
     <form method="post" action="/users.php" novalidate>
@@ -192,19 +203,29 @@ app_header('User accounts', 'users.php');
         <input type="hidden" name="id" value="<?= (int) $u['id'] ?>">
         <div class="modal-head">
             <div>
-                <h2><?= e($u['full_name']) ?></h2>
+                <h2><?= e(account_name($u)) ?></h2>
                 <p class="mono"><?= e($u['username']) ?><?= $isSelf ? ' · your account' : '' ?></p>
             </div>
             <button class="icon-btn modal-close" type="button" data-dialog-close aria-label="Close"><?= icon('x') ?></button>
         </div>
         <div class="modal-body">
-            <?php if ($editId === (int) $u['id'] && $editErrors): ?>
+            <?php if ($isEditTarget && $editErrors): ?>
                 <div class="alert alert-error"><?= icon('alert') ?><span><?= e(reset($editErrors)) ?></span></div>
             <?php endif; ?>
             <div class="form-grid" style="grid-template-columns: minmax(0,1fr)">
+                <div class="field <?= ($isEditTarget && isset($editErrors['first_name'])) ? 'has-error' : '' ?>">
+                    <label for="fn-<?= (int) $u['id'] ?>">First name</label>
+                    <input type="text" id="fn-<?= (int) $u['id'] ?>" name="first_name" value="<?= e((string) ($vals['first_name'] ?? '')) ?>" required>
+                    <?php if ($isEditTarget && isset($editErrors['first_name'])): ?><span class="error"><?= e($editErrors['first_name']) ?></span><?php endif; ?>
+                </div>
                 <div class="field">
-                    <label for="fn-<?= (int) $u['id'] ?>">Full name</label>
-                    <input type="text" id="fn-<?= (int) $u['id'] ?>" name="full_name" value="<?= e((string) $vals['full_name']) ?>">
+                    <label for="mn-<?= (int) $u['id'] ?>">Middle name (optional)</label>
+                    <input type="text" id="mn-<?= (int) $u['id'] ?>" name="middle_name" value="<?= e((string) ($vals['middle_name'] ?? '')) ?>" placeholder="Middle name or initial">
+                </div>
+                <div class="field <?= ($isEditTarget && isset($editErrors['last_name'])) ? 'has-error' : '' ?>">
+                    <label for="ln-<?= (int) $u['id'] ?>">Surname</label>
+                    <input type="text" id="ln-<?= (int) $u['id'] ?>" name="last_name" value="<?= e((string) ($vals['last_name'] ?? '')) ?>" required>
+                    <?php if ($isEditTarget && isset($editErrors['last_name'])): ?><span class="error"><?= e($editErrors['last_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
                     <label for="em-<?= (int) $u['id'] ?>">Email</label>
@@ -253,10 +274,19 @@ app_header('User accounts', 'users.php');
                 <div class="alert alert-error"><?= icon('alert') ?><span>Review the highlighted fields.</span></div>
             <?php endif; ?>
             <div class="form-grid">
-                <div class="field <?= isset($errors['full_name']) ? 'has-error' : '' ?>">
-                    <label for="u_name">Full name</label>
-                    <input type="text" id="u_name" name="full_name" value="<?= e($old['full_name']) ?>">
-                    <?php if (isset($errors['full_name'])): ?><span class="error"><?= e($errors['full_name']) ?></span><?php endif; ?>
+                <div class="field <?= isset($errors['first_name']) ? 'has-error' : '' ?>">
+                    <label for="u_first">First name</label>
+                    <input type="text" id="u_first" name="first_name" value="<?= e($old['first_name']) ?>" required>
+                    <?php if (isset($errors['first_name'])): ?><span class="error"><?= e($errors['first_name']) ?></span><?php endif; ?>
+                </div>
+                <div class="field">
+                    <label for="u_middle">Middle name (optional)</label>
+                    <input type="text" id="u_middle" name="middle_name" value="<?= e($old['middle_name']) ?>" placeholder="Middle name or initial">
+                </div>
+                <div class="field <?= isset($errors['last_name']) ? 'has-error' : '' ?>">
+                    <label for="u_last">Surname</label>
+                    <input type="text" id="u_last" name="last_name" value="<?= e($old['last_name']) ?>" required>
+                    <?php if (isset($errors['last_name'])): ?><span class="error"><?= e($errors['last_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="field <?= isset($errors['username']) ? 'has-error' : '' ?>">
                     <label for="u_user">Username</label>

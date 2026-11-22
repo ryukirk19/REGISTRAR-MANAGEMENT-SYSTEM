@@ -93,6 +93,56 @@ function full_name(array $student): string
     return trim($student['first_name'] . ' ' . $middle . ' ' . $student['last_name']);
 }
 
+function name_last_first(string $first, string $middle, string $last): string
+{
+    $initial = trim($middle) !== '' ? ' ' . mb_strtoupper(mb_substr(trim($middle), 0, 1)) . '.' : '';
+    return trim(trim($last) . ', ' . trim($first) . $initial);
+}
+
+function student_name(array $student): string
+{
+    return name_last_first(
+        (string) ($student['first_name'] ?? ''),
+        (string) ($student['middle_name'] ?? ''),
+        (string) ($student['last_name'] ?? '')
+    );
+}
+
+function person_name(string $fullName): string
+{
+    $parts = preg_split('/\s+/', trim($fullName)) ?: [];
+    if (count($parts) < 2) {
+        return trim($fullName);
+    }
+    $last = array_pop($parts);
+    $first = array_shift($parts);
+    $initial = $parts ? ' ' . mb_strtoupper(mb_substr($parts[0], 0, 1)) . '.' : '';
+    return $last . ', ' . $first . $initial;
+}
+
+function split_person_name(string $fullName): array
+{
+    $parts = preg_split('/\s+/', trim($fullName)) ?: [];
+    if (!$parts) {
+        return ['', '', ''];
+    }
+    if (count($parts) === 1) {
+        return [$parts[0], '', ''];
+    }
+    $last = array_pop($parts);
+    $first = array_shift($parts);
+    return [$first, implode(' ', $parts), $last];
+}
+
+function account_name(array $user): string
+{
+    $last = trim((string) ($user['last_name'] ?? ''));
+    if ($last === '') {
+        return person_name((string) ($user['full_name'] ?? ''));
+    }
+    return name_last_first((string) ($user['first_name'] ?? ''), (string) ($user['middle_name'] ?? ''), $last);
+}
+
 function age_from(?string $birthDate): string
 {
     if (!$birthDate) {
@@ -118,6 +168,16 @@ function set_setting(string $key, string $value): void
 {
     $stmt = db()->prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     $stmt->execute([$key, $value]);
+}
+
+function last_backup_age_days(): ?int
+{
+    $value = setting('last_backup_at', '');
+    $ts = $value !== '' ? strtotime($value) : false;
+    if (!$ts) {
+        return null;
+    }
+    return max(0, (int) floor((time() - $ts) / 86400));
 }
 
 function credential_docs(): array
@@ -198,7 +258,7 @@ function grade_levels(): array
 
 function strands(): array
 {
-    return ['', 'STEM', 'ABM', 'HUMSS', 'GAS', 'TVL-ICT', 'TVL-HE'];
+    return ['', 'STEM', 'ABM', 'HUMSS', 'GAS', 'TVL'];
 }
 
 function status_tone(string $status): string

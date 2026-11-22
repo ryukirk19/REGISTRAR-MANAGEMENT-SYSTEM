@@ -11,9 +11,11 @@ if (!is_file(DB_FILE)) {
     exit('No database file to back up.');
 }
 
+$filename = 'regis-backup-' . date('Ymd-His') . '.sqlite';
+set_setting('last_backup_at', date('Y-m-d H:i:s'));
+set_setting('last_backup_file', $filename);
 log_activity('Database backup downloaded', 'Backup copy of the REGIS+ database downloaded by ' . current_user()['full_name']);
 
-$filename = 'regis-backup-' . date('Ymd-His') . '.sqlite';
 header('Content-Type: application/vnd.sqlite3');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Content-Length: ' . filesize(DB_FILE));

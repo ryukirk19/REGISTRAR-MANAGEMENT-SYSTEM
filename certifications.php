@@ -134,7 +134,7 @@ app_header('Certifications', 'certifications.php');
                         <tr style="<?= $focusId === (int) $c['id'] ? 'background:#fdfcf7' : '' ?>">
                             <td><span class="code-tag"><?= e($c['cert_no']) ?></span></td>
                             <td>
-                                <a class="strong" href="/student.php?id=<?= (int) $c['student_id'] ?>"><?= e($c['first_name'] . ' ' . $c['last_name']) ?></a>
+                                <a class="strong" href="/student.php?id=<?= (int) $c['student_id'] ?>"><?= e(student_name($c)) ?></a>
                                 <span class="sub"><?= e($c['record_code']) ?> · <?= e($c['grade_level']) ?></span>
                             </td>
                             <td><?= e($c['cert_type']) ?></td>
@@ -208,7 +208,7 @@ app_header('Certifications', 'certifications.php');
                         <option value="">Select a student…</option>
                         <?php foreach (student_options() as $s): ?>
                             <option value="<?= (int) $s['id'] ?>" <?= (string) $old['student_id'] === (string) $s['id'] ? 'selected' : '' ?>>
-                                <?= e($s['last_name'] . ', ' . $s['first_name'] . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
+                                <?= e(student_name($s) . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

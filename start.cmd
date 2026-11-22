@@ -12,7 +12,7 @@ if not exist "runtime\php\php.exe" (
 )
 
 if not exist "database\regis.sqlite" (
-    echo   First run: creating the database with demo records...
+    echo   First run: creating the database...
 )
 
 echo.

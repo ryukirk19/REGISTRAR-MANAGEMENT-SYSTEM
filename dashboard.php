@@ -83,6 +83,8 @@ $donutColors = [
     'Cancelled' => '#9aa6aa',
 ];
 $circumference = 2 * M_PI * 60;
+$backupAge = is_admin() ? last_backup_age_days() : null;
+$backupStale = is_admin() && ($backupAge === null || $backupAge > 7);
 
 app_header('Dashboard', 'dashboard.php');
 ?>
@@ -97,6 +99,20 @@ app_header('Dashboard', 'dashboard.php');
         <a class="btn btn-primary" href="/requests.php?new=1"><?= icon('plus') ?> New request</a>
     </div>
 </div>
+
+<?php if ($backupStale): ?>
+<div class="alert alert-warn">
+    <?= icon('alert') ?>
+    <span>
+        <?php if ($backupAge === null): ?>
+            No database backup has been recorded yet.
+        <?php else: ?>
+            The last database backup was <?= $backupAge ?> day<?= $backupAge === 1 ? '' : 's' ?> ago.
+        <?php endif; ?>
+        Download one from <a href="/settings.php" style="color:inherit;text-decoration:underline">Settings</a> or run <span class="mono">tools\backup.cmd</span>.
+    </span>
+</div>
+<?php endif; ?>
 
 <div class="grid kpi-grid" style="margin-bottom:18px">
     <div class="kpi">
@@ -204,7 +220,7 @@ app_header('Dashboard', 'dashboard.php');
                     <tr>
                         <td><a class="code-tag" href="/requests.php?focus=<?= (int) $r['id'] ?>"><?= e($r['request_no']) ?></a></td>
                         <td>
-                            <span class="strong"><?= e($r['first_name'] . ' ' . $r['last_name']) ?></span>
+                            <span class="strong"><?= e(student_name($r)) ?></span>
                             <span class="sub"><?= e($r['grade_level']) ?> · <?= e($r['section']) ?></span>
                         </td>
                         <td><?= e($r['document_type']) ?></td>
@@ -218,6 +234,7 @@ app_header('Dashboard', 'dashboard.php');
     </section>
 
     <div style="display:flex; flex-direction:column; gap:18px">
+        <?php if (can_manage()): ?>
         <section class="card">
             <div class="card-head">
                 <div>
@@ -230,7 +247,7 @@ app_header('Dashboard', 'dashboard.php');
                 <div class="attention-item">
                     <span class="avatar-sm accent"><?= e(initials($s['first_name'] . ' ' . $s['last_name'])) ?></span>
                     <div class="meta">
-                        <strong><?= e($s['first_name'] . ' ' . $s['last_name']) ?></strong>
+                        <strong><?= e(student_name($s)) ?></strong>
                         <span><?= (int) $s['cred_total'] - (int) $s['cred_done'] ?> missing · <?= e($s['grade_level']) ?></span>
                     </div>
                     <a class="btn btn-sm btn-ghost" href="/student.php?id=<?= (int) $s['id'] ?>">Open</a>
@@ -240,6 +257,7 @@ app_header('Dashboard', 'dashboard.php');
                 <div class="empty" style="padding:26px"><p>Every record has a complete checklist.</p></div>
             <?php endif; ?>
         </section>
+        <?php endif; ?>
 
         <section class="card">
             <div class="card-head">
@@ -254,7 +272,7 @@ app_header('Dashboard', 'dashboard.php');
             ?>
                 <div class="mini-row">
                     <div class="left">
-                        <strong><?= e($f['first_name'] . ' ' . $f['last_name']) ?></strong>
+                        <strong><?= e(student_name($f)) ?></strong>
                         <span><?= e($f['concern']) ?></span>
                     </div>
                     <span class="pill <?= $overdue ? 'pill-danger' : 'pill-warn' ?>"><span class="pill-dot"></span><?= $overdue ? 'Overdue ' : '' ?><?= e(fmt_date($f['next_followup_date'], 'M j')) ?></span>

@@ -2,11 +2,14 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/layout.php';
-require_login();
+require_manager();
 
 $pdo = db();
 $errors = [];
 $openModal = isset($_GET['new']);
+$storageCabinets = storage_cabinets();
+$storageShelves = storage_shelves();
+$storageFolders = storage_folders();
 $old = [
     'lrn' => '', 'first_name' => '', 'middle_name' => '', 'last_name' => '', 'sex' => 'F',
     'birth_date' => '', 'grade_level' => 'Grade 7', 'section' => '', 'strand' => '',
@@ -17,7 +20,6 @@ $old = [
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
-    require_manager();
     if (($_POST['action'] ?? '') === 'create') {
         foreach ($old as $k => $v) {
             $old[$k] = trim((string) ($_POST[$k] ?? ''));
@@ -44,6 +46,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($old['birth_date'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $old['birth_date'])) {
             $errors['birth_date'] = 'Use a valid birth date.';
+        }
+
+        $syForLimits = $old['school_year'] !== '' ? $old['school_year'] : setting('school_year', '');
+        if (!isset($errors['grade_level']) && $syForLimits !== '' && enrollment_grade_count($syForLimits, $old['grade_level']) >= GRADE_ENROLLMENT_LIMIT) {
+            $errors['grade_level'] = $old['grade_level'] . ' already has ' . number_format(GRADE_ENROLLMENT_LIMIT) . ' learners for ' . $syForLimits . '.';
+        }
+        if (!isset($errors['strand']) && in_array($old['grade_level'], ['Grade 11', 'Grade 12'], true) && $old['strand'] !== ''
+            && $syForLimits !== '' && enrollment_strand_count($syForLimits, $old['strand']) >= STRAND_ENROLLMENT_LIMIT) {
+            $errors['strand'] = $old['strand'] . ' already has ' . number_format(STRAND_ENROLLMENT_LIMIT) . ' learners for ' . $syForLimits . '.';
+        }
+        $storageError = storage_validate($old);
+        if ($storageError !== null) {
+            $errors['folder_no'] = $storageError;
         }
 
         if (!$errors) {
@@ -132,6 +147,7 @@ app_header('Student records', 'students.php');
     </div>
     <?php if (can_manage()): ?>
         <div class="page-actions">
+            <a class="btn btn-ghost" href="/import.php"><?= icon('upload') ?> Import CSV</a>
             <button class="btn btn-primary" type="button" data-dialog-open="#newStudent"><?= icon('plus') ?> New record</button>
         </div>
     <?php endif; ?>
@@ -193,7 +209,7 @@ app_header('Student records', 'students.php');
                             <div class="name-cell">
                                 <span class="avatar-sm<?= $comp['pct'] >= 100 ? ' accent' : '' ?>"><?= e(initials($s['first_name'] . ' ' . $s['last_name'])) ?></span>
                                 <span>
-                                    <a class="strong" href="/student.php?id=<?= (int) $s['id'] ?>"><?= e(full_name($s)) ?></a>
+                                    <a class="strong" href="/student.php?id=<?= (int) $s['id'] ?>"><?= e(student_name($s)) ?></a>
                                     <span class="sub mono"><?= e($s['record_code']) ?> · LRN <?= e($s['lrn']) ?></span>
                                 </span>
                             </div>
@@ -274,8 +290,8 @@ app_header('Student records', 'students.php');
                     <?php if (isset($errors['first_name'])): ?><span class="error"><?= e($errors['first_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
-                    <label for="middle_name">Middle name</label>
-                    <input type="text" id="middle_name" name="middle_name" value="<?= e($old['middle_name']) ?>">
+                    <label for="middle_name">Middle name (optional)</label>
+                    <input type="text" id="middle_name" name="middle_name" value="<?= e($old['middle_name']) ?>" placeholder="Leave blank if none">
                 </div>
                 <div class="field <?= isset($errors['last_name']) ? 'has-error' : '' ?>">
                     <label for="last_name">Last name</label>
@@ -293,6 +309,7 @@ app_header('Student records', 'students.php');
                             <option value="<?= e($g) ?>" <?= $old['grade_level'] === $g ? 'selected' : '' ?>><?= e($g) ?></option>
                         <?php endforeach; ?>
                     </select>
+                    <?php if (isset($errors['grade_level'])): ?><span class="error"><?= e($errors['grade_level']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
                     <label for="section">Section</label>
@@ -305,6 +322,7 @@ app_header('Student records', 'students.php');
                             <option value="<?= e($st) ?>" <?= $old['strand'] === $st ? 'selected' : '' ?>><?= $st === '' ? 'Junior high (no strand)' : e($st) ?></option>
                         <?php endforeach; ?>
                     </select>
+                    <?php if (isset($errors['strand'])): ?><span class="error"><?= e($errors['strand']) ?></span><?php endif; ?>
                 </div>
                 <div class="field">
                     <label for="status">Record status</label>
@@ -331,20 +349,58 @@ app_header('Student records', 'students.php');
                     <input type="text" id="address" name="address" value="<?= e($old['address']) ?>" placeholder="Barangay, City, Province">
                 </div>
                 <div class="field-set">
-                    <?= icon('pin') ?>
-                    <span>Physical location of the folder. Leave blank if the record has not been filed yet — the locator can be updated any time from the student's page.</span>
+                    <?= icon('cabinet') ?>
+                    <span>Pick from the storage registry. The cabinet matches the grade level, the shelf is the section, and the folder belongs to one student. <a href="/cabinets.php" target="_blank" rel="noopener">Add cabinet, shelf, or folder</a>.</span>
                 </div>
                 <div class="field">
-                    <label for="cabinet">Cabinet</label>
-                    <input type="text" id="cabinet" name="cabinet" value="<?= e($old['cabinet']) ?>" placeholder="e.g. A-02">
+                    <label for="cabinet">Cabinet (grade level)</label>
+                    <select id="cabinet" name="cabinet" data-storage-cabinet>
+                        <option value="">— Not filed —</option>
+                        <?php foreach ($storageCabinets as $cab): ?>
+                            <option value="<?= e($cab['code']) ?>"
+                                data-grade="<?= e((string) ($cab['grade_level'] ?? '')) ?>"
+                                <?= $old['cabinet'] === $cab['code'] ? 'selected' : '' ?>>
+                                <?= e($cab['code'] . (trim((string) ($cab['grade_level'] ?? '')) !== '' ? ' · ' . $cab['grade_level'] : '')) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div class="field">
-                    <label for="shelf">Shelf</label>
-                    <input type="text" id="shelf" name="shelf" value="<?= e($old['shelf']) ?>" placeholder="e.g. Shelf 3">
+                    <label for="shelf">Shelf (section)</label>
+                    <select id="shelf" name="shelf" data-storage-shelf>
+                        <option value="">— Select cabinet —</option>
+                        <?php foreach ($storageShelves as $shelf): ?>
+                            <option value="<?= e($shelf['code']) ?>"
+                                data-cabinet="<?= e($shelf['cabinet_code']) ?>"
+                                data-section="<?= e((string) ($shelf['section'] ?? '')) ?>"
+                                data-grade="<?= e((string) ($shelf['grade_level'] ?? '')) ?>"
+                                data-strand="<?= e((string) ($shelf['strand'] ?? '')) ?>"
+                                <?= $old['cabinet'] === $shelf['cabinet_code'] && $old['shelf'] === $shelf['code'] ? 'selected' : '' ?>>
+                                <?= e($shelf['code'] . ($shelf['section'] ? ' — ' . $shelf['section'] : ' — unreserved')) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div class="field">
-                    <label for="folder_no">Folder number</label>
-                    <input type="text" id="folder_no" name="folder_no" value="<?= e($old['folder_no']) ?>" placeholder="e.g. Folder 018">
+                    <label for="folder_no">Folder (student)</label>
+                    <select id="folder_no" name="folder_no" data-storage-folder>
+                        <option value="">— Select shelf —</option>
+                        <?php foreach ($storageFolders as $folder):
+                            $occupant = trim((string) ($folder['occupant'] ?? ''));
+                            $isCurrent = $old['cabinet'] === $folder['cabinet_code'] && $old['shelf'] === $folder['shelf_code'] && $old['folder_no'] === $folder['number'];
+                            $isTaken = $occupant !== '' && !$isCurrent;
+                        ?>
+                            <option value="<?= e($folder['number']) ?>"
+                                data-cabinet="<?= e($folder['cabinet_code']) ?>"
+                                data-shelf="<?= e($folder['shelf_code']) ?>"
+                                data-taken="<?= $isTaken ? '1' : '0' ?>"
+                                <?= $isCurrent ? 'selected' : '' ?>
+                                <?= $isTaken ? 'disabled' : '' ?>>
+                                Folder <?= e($folder['number']) ?> · <?= $occupant !== '' ? e($occupant) : 'Empty' ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php if (isset($errors['folder_no'])): ?><span class="error"><?= e($errors['folder_no']) ?></span><?php endif; ?>
                 </div>
             </div>
         </div>

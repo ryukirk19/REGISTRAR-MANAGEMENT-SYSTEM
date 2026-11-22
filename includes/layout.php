@@ -37,6 +37,7 @@ function icon(string $name, string $class = ''): string
         'file' => '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
         'chevron' => '<path d="m6 9 6 6 6-6"/>',
         'copy' => '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
+        'cabinet' => '<rect x="3" y="4" width="18" height="4" rx="1.2"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 13h4"/>',
     ];
     $d = $paths[$name] ?? $paths['spark'];
     return '<svg class="icon ' . e($class) . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $d . '</svg>';
@@ -44,12 +45,7 @@ function icon(string $name, string $class = ''): string
 
 function logo_mark(string $class = ''): string
 {
-    return '<svg class="logo-mark ' . e($class) . '" viewBox="0 0 40 40" aria-hidden="true">'
-        . '<rect x="1.2" y="1.2" width="37.6" height="37.6" rx="11" fill="currentColor" opacity=".12"/>'
-        . '<rect x="1.2" y="1.2" width="37.6" height="37.6" rx="11" fill="none" stroke="currentColor" stroke-opacity=".38"/>'
-        . '<path d="M12 28V12h8.2a5 5 0 0 1 0 10H14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
-        . '<path d="M26.5 21v7M23 24.5h7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>'
-        . '</svg>';
+    return '<img class="logo-mark ' . e($class) . '" src="/assets/img/vnhs-logo.png" alt="REGIS+ logo" width="52" height="52">';
 }
 
 function open_page(string $title, string $bodyClass = '', array $css = [], string $bodyAttr = ''): void
@@ -59,7 +55,10 @@ function open_page(string $title, string $bodyClass = '', array $css = [], strin
     echo '<meta name="viewport" content="width=device-width, initial-scale=1">' . "\n";
     echo '<title>' . e($title) . ' · ' . APP_NAME . "</title>\n";
     echo '<meta name="description" content="' . APP_NAME . ' — ' . APP_TAGLINE . '">' . "\n";
-    echo '<link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">' . "\n";
+    if (!empty($_SESSION['session_token'])) {
+        echo '<meta name="regis-csrf" content="' . e(csrf_token()) . '">' . "\n";
+    }
+    echo '<link rel="icon" href="/assets/img/favicon.png" type="image/png">' . "\n";
     foreach ($css as $file) {
         echo '<link rel="stylesheet" href="' . e(url($file)) . '">' . "\n";
     }
@@ -82,21 +81,25 @@ function app_header(string $title, string $active, string $screenTitle = ''): vo
     $openRequests = (int) db()->query("SELECT COUNT(*) FROM requests WHERE status IN ('Pending','Processing','Ready for Release')")->fetchColumn();
     $overdue = (int) db()->query("SELECT COUNT(*) FROM followups WHERE status <> 'Resolved' AND next_followup_date IS NOT NULL AND next_followup_date < date('now','localtime')")->fetchColumn();
 
+    $workspace = [['dashboard.php', 'dashboard', 'Dashboard', 0]];
+    if (can_manage()) {
+        $workspace[] = ['students.php', 'records', 'Student Records', 0];
+        $workspace[] = ['cabinets.php', 'cabinet', 'Storage & Cabinets', 0];
+    }
+    $workspace[] = ['requests.php', 'requests', 'Document Requests', $openRequests];
+
     $nav = [
-        'Workspace' => [
-            ['dashboard.php', 'dashboard', 'Dashboard', 0],
-            ['students.php', 'records', 'Student Records', 0],
-            ['requests.php', 'requests', 'Document Requests', $openRequests],
-        ],
+        'Workspace' => $workspace,
         'Tracking' => [
             ['followups.php', 'followup', 'Follow-Up Log', $overdue],
             ['certifications.php', 'cert', 'Certifications', 0],
             ['transfers.php', 'transfer', 'Transfers', 0],
         ],
-        'Administration' => [
-            ['reports.php', 'reports', 'Reports', 0],
-        ],
+        'Administration' => [],
     ];
+    if (can_manage()) {
+        $nav['Administration'][] = ['reports.php', 'reports', 'Reports', 0];
+    }
     if (is_admin()) {
         $nav['Administration'][] = ['users.php', 'users', 'User Accounts', 0];
         $nav['Administration'][] = ['audit.php', 'audit', 'Audit Trail', 0];
@@ -146,25 +149,27 @@ function app_header(string $title, string $active, string $screenTitle = ''): vo
     <div class="app-body">
         <header class="topbar">
             <button class="icon-btn topbar-menu" type="button" data-sidebar-toggle aria-label="Toggle navigation"><?= icon('menu') ?></button>
+            <?php if (can_manage()): ?>
             <form class="topbar-search" action="/students.php" method="get" role="search">
                 <?= icon('search') ?>
                 <input type="search" name="q" placeholder="Search student name, LRN, or record code" value="">
                 <kbd>Enter</kbd>
             </form>
+            <?php endif; ?>
             <div class="topbar-right">
                 <span class="topbar-date"><?= icon('calendar') ?><?= e(date('D, M j')) ?></span>
                 <details class="user-menu">
                     <summary>
                         <span class="avatar"><?= e(initials($user['full_name'])) ?></span>
                         <span class="user-meta">
-                            <strong><?= e($user['full_name']) ?></strong>
+                            <strong><?= e(account_name($user)) ?></strong>
                             <small><?= e(role_label($user['role'])) ?></small>
                         </span>
                         <?= icon('chevron', 'chev') ?>
                     </summary>
                     <div class="user-dropdown">
                         <div class="user-dropdown-head">
-                            <strong><?= e($user['full_name']) ?></strong>
+                            <strong><?= e(account_name($user)) ?></strong>
                             <small><?= e($user['email'] ?? '') ?></small>
                         </div>
                         <a href="/settings.php"><?= icon('settings') ?>Account settings</a>
@@ -277,7 +282,7 @@ function site_footer(): void
     </div>
     <div class="site-footer-base">
         <span>© <?= date('Y') ?> REGIS+ · Registrar Records Management System</span>
-        <span>Demo system · No live student data</span>
+        <span>Registrar's Office · Valencia National High School</span>
     </div>
 </footer>
     <?php

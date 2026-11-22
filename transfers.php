@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([(int) $old['student_id']]);
             }
             log_activity('Transfer recorded', $old['direction'] . ' transfer for ' . $student['record_code'] . ' · ' . $old['counterpart_school']);
-            flash('success', $old['direction'] . ' transfer recorded for ' . $student['first_name'] . ' ' . $student['last_name'] . '.');
+            flash('success', $old['direction'] . ' transfer recorded for ' . student_name($student) . '.');
             redirect('transfers.php');
         }
     }
@@ -172,7 +172,7 @@ app_header('Transfers', 'transfers.php');
                 <?php foreach ($rows as $t): ?>
                     <tr>
                         <td>
-                            <a class="strong" href="/student.php?id=<?= (int) $t['student_id'] ?>"><?= e($t['first_name'] . ' ' . $t['last_name']) ?></a>
+                            <a class="strong" href="/student.php?id=<?= (int) $t['student_id'] ?>"><?= e(student_name($t)) ?></a>
                             <span class="sub"><?= e($t['record_code']) ?> · <?= e($t['grade_level']) ?></span>
                         </td>
                         <td><span class="pill <?= $t['direction'] === 'Outgoing' ? 'pill-brass' : 'pill-info' ?>"><span class="pill-dot"></span><?= e($t['direction']) ?></span></td>
@@ -232,7 +232,7 @@ app_header('Transfers', 'transfers.php');
                         <option value="">Select a student…</option>
                         <?php foreach (student_options() as $s): ?>
                             <option value="<?= (int) $s['id'] ?>" <?= (string) $old['student_id'] === (string) $s['id'] ? 'selected' : '' ?>>
-                                <?= e($s['last_name'] . ', ' . $s['first_name'] . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
+                                <?= e(student_name($s) . ' — ' . $s['grade_level'] . ' · ' . $s['record_code']) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

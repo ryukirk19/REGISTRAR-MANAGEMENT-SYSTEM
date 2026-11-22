@@ -29,7 +29,8 @@ $totalPages = max(1, (int) ceil($total / $perPage));
 $page = min($page, $totalPages);
 
 $stmt = $pdo->prepare(
-    "SELECT a.*, u.full_name AS user_name, u.role AS user_role
+    "SELECT a.*, u.full_name AS user_name, u.role AS user_role,
+            u.first_name AS user_first_name, u.middle_name AS user_middle_name, u.last_name AS user_last_name
      FROM activity a LEFT JOIN users u ON u.id = a.user_id
      WHERE $whereSql ORDER BY a.created_at DESC, a.id DESC LIMIT $perPage OFFSET " . (($page - 1) * $perPage)
 );
@@ -38,7 +39,18 @@ $rows = $stmt->fetchAll();
 
 $todayCount = (int) $pdo->query("SELECT COUNT(*) FROM activity WHERE date(created_at) = date('now','localtime')")->fetchColumn();
 $signIns = (int) $pdo->query("SELECT COUNT(*) FROM activity WHERE action = 'User signed in'")->fetchColumn();
-$users = $pdo->query('SELECT id, full_name FROM users ORDER BY full_name')->fetchAll();
+$users = $pdo->query('SELECT id, first_name, middle_name, last_name, full_name FROM users ORDER BY full_name')->fetchAll();
+
+$nameMap = [];
+foreach ($users as $u) {
+    $nameMap[$u['full_name']] = account_name($u);
+}
+foreach ($pdo->query('SELECT first_name, middle_name, last_name FROM students')->fetchAll() as $s) {
+    $formatted = student_name($s);
+    $nameMap[full_name($s)] = $formatted;
+    $short = trim($s['first_name'] . ' ' . $s['last_name']);
+    $nameMap[$short] = $nameMap[$short] ?? $formatted;
+}
 
 $qs = $_GET;
 unset($qs['page']);
@@ -81,7 +93,7 @@ app_header('Audit trail', 'audit.php');
         <select class="select-inline" name="user">
             <option value="0">All users</option>
             <?php foreach ($users as $u): ?>
-                <option value="<?= (int) $u['id'] ?>" <?= $userId === (int) $u['id'] ? 'selected' : '' ?>><?= e($u['full_name']) ?></option>
+                <option value="<?= (int) $u['id'] ?>" <?= $userId === (int) $u['id'] ? 'selected' : '' ?>><?= e(account_name($u)) ?></option>
             <?php endforeach; ?>
         </select>
         <button class="btn btn-ghost btn-sm" type="submit"><?= icon('search') ?> Filter</button>
@@ -97,15 +109,17 @@ app_header('Audit trail', 'audit.php');
             <table class="data">
                 <thead><tr><th style="width:180px">When</th><th>Person</th><th>Action</th><th>Details</th></tr></thead>
                 <tbody>
-                <?php foreach ($rows as $a): ?>
+                <?php foreach ($rows as $a):
+                    $personName = $a['user_name'] ? account_name(['first_name' => $a['user_first_name'], 'middle_name' => $a['user_middle_name'], 'last_name' => $a['user_last_name'], 'full_name' => $a['user_name']]) : 'System';
+                ?>
                     <tr>
                         <td class="num" style="white-space:nowrap"><?= e(fmt_datetime($a['created_at'])) ?></td>
                         <td>
-                            <span class="strong" style="font-weight:500"><?= e($a['user_name'] ?: 'System') ?></span>
+                            <span class="strong" style="font-weight:500"><?= e($personName) ?></span>
                             <span class="sub"><?= e($a['user_role'] ? role_label($a['user_role']) : '') ?></span>
                         </td>
                         <td><span class="pill pill-muted"><span class="pill-dot"></span><?= e($a['action']) ?></span></td>
-                        <td><?= e($a['details'] ?: '—') ?></td>
+                        <td><?= e($a['details'] ? strtr((string) $a['details'], $nameMap) : '—') ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>

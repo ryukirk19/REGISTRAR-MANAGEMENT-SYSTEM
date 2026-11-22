@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 
-require_login();
+require_manager();
 $studentId = (int) ($_GET['id'] ?? 0);
 $stmt = db()->prepare('SELECT * FROM students WHERE id = ?');
 $stmt->execute([$studentId]);

@@ -2,9 +2,10 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/layout.php';
-require_login();
+require_manager();
 
 $pdo = db();
+$activeSy = setting('school_year', '');
 $from = (string) ($_GET['from'] ?? date('Y-m-d', strtotime('-90 days')));
 $to = (string) ($_GET['to'] ?? today());
 $grade = (string) ($_GET['grade'] ?? '');
@@ -20,12 +21,20 @@ if ($gradeSql) {
     $rangeParams[':grade'] = $grade;
 }
 
-$students = $pdo->query(
+$studentSql =
     "SELECT s.*,
         (SELECT COUNT(*) FROM credentials c WHERE c.student_id = s.id AND c.status = 'Complete') AS cred_done,
         (SELECT COUNT(*) FROM credentials c WHERE c.student_id = s.id AND c.status <> 'N/A') AS cred_total
-     FROM students s ORDER BY s.last_name, s.first_name"
-)->fetchAll();
+     FROM students s";
+$studentParams = [];
+if ($activeSy !== '') {
+    $studentSql .= ' WHERE s.school_year = :sy';
+    $studentParams[':sy'] = $activeSy;
+}
+$studentSql .= ' ORDER BY s.last_name COLLATE NOCASE, s.first_name COLLATE NOCASE';
+$studentStmt = $pdo->prepare($studentSql);
+$studentStmt->execute($studentParams);
+$students = $studentStmt->fetchAll();
 
 $byGrade = [];
 foreach (grade_levels() as $g) {
@@ -47,6 +56,45 @@ foreach ($students as $s) {
     }
 }
 usort($missingDocs, fn ($a, $b) => ((int) $b['cred_total'] - (int) $b['cred_done']) <=> ((int) $a['cred_total'] - (int) $a['cred_done']));
+
+$strandOrder = ['STEM', 'ABM', 'HUMSS', 'GAS', 'TVL'];
+$byStrand = array_fill_keys($strandOrder, 0);
+$otherStrands = [];
+foreach ($students as $s) {
+    $strandName = trim((string) $s['strand']);
+    if ($strandName === '') {
+        continue;
+    }
+    if (isset($byStrand[$strandName])) {
+        $byStrand[$strandName]++;
+    } else {
+        $otherStrands[$strandName] = ($otherStrands[$strandName] ?? 0) + 1;
+    }
+}
+$shsTotal = array_sum($byStrand) + array_sum($otherStrands);
+
+$rosterSql = "SELECT s.grade_level, COALESCE(s.strand, '') AS strand, s.section, COUNT(*) AS n
+    FROM students s
+    WHERE s.section IS NOT NULL AND s.section <> ''";
+$rosterParams = [];
+if ($activeSy !== '') {
+    $rosterSql .= ' AND s.school_year = :sy';
+    $rosterParams[':sy'] = $activeSy;
+}
+$rosterSql .= " GROUP BY s.grade_level, COALESCE(s.strand, ''), s.section
+    ORDER BY CAST(REPLACE(s.grade_level, 'Grade ', '') AS INTEGER) ASC,
+        CASE WHEN s.strand IS NULL OR s.strand = '' THEN 0
+            WHEN s.strand = 'STEM' THEN 1
+            WHEN s.strand = 'ABM' THEN 2
+            WHEN s.strand = 'HUMSS' THEN 3
+            WHEN s.strand = 'GAS' THEN 4
+            WHEN s.strand = 'TVL' THEN 5
+            ELSE 6 END ASC,
+        COALESCE(s.strand, '') COLLATE NOCASE ASC,
+        s.section COLLATE NOCASE ASC";
+$rosterStmt = $pdo->prepare($rosterSql);
+$rosterStmt->execute($rosterParams);
+$rosters = $rosterStmt->fetchAll();
 
 $reqStmt = $pdo->prepare(
     "SELECT r.*, s.first_name, s.last_name, s.record_code, s.grade_level
@@ -86,10 +134,10 @@ app_header('Reports', 'reports.php');
     <div>
         <div class="eyebrow">Reports, monitoring &amp; data privacy</div>
         <h1>Registrar reports</h1>
-        <p class="page-sub">Completeness, request volume, and follow-up exposure for school monitoring.</p>
+        <p class="page-sub">Enrollment, completeness, and request volume for <strong><?= e($activeSy ?: 'all school years') ?></strong> — <?= count($students) ?> enrolled learners.</p>
     </div>
     <div class="page-actions">
-        <a class="btn btn-ghost" href="/reports_export.php?type=students"><?= icon('download') ?> Students CSV</a>
+        <a class="btn btn-ghost" href="/reports_export.php?type=students"><?= icon('download') ?> Roster CSV</a>
         <a class="btn btn-ghost" href="/reports_export.php?type=requests&<?= e($exportQuery) ?>"><?= icon('download') ?> Requests CSV</a>
         <a class="btn btn-primary" href="/reports_export.php?type=followups"><?= icon('download') ?> Follow-ups CSV</a>
     </div>
@@ -142,6 +190,58 @@ app_header('Reports', 'reports.php');
 
 <div class="grid split-2" style="margin-bottom:18px">
     <section class="card">
+        <div class="card-head bordered">
+            <div>
+                <h2 class="section-title">Enrollment by grade level</h2>
+                <p class="section-sub"><?= e($activeSy ?: 'All years') ?> · <?= count($students) ?> learners · limit <?= number_format(GRADE_ENROLLMENT_LIMIT) ?> per grade</p>
+            </div>
+            <?php if ($activeSy !== ''): ?><span class="pill pill-ok"><span class="pill-dot"></span>Active SY</span><?php endif; ?>
+        </div>
+        <div style="padding:18px 22px 8px">
+            <?php foreach ($byGrade as $g => $d): $pct = min(100, (int) round($d['students'] / GRADE_ENROLLMENT_LIMIT * 100)); ?>
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:11px">
+                    <span style="width:64px; font-size:12.4px; font-weight:600"><?= e($g) ?></span>
+                    <div class="meter-track" style="flex:1"><div class="meter-fill <?= $pct >= 95 ? 'danger' : ($pct >= 80 ? 'warn' : '') ?>" style="width:<?= $pct ?>%"></div></div>
+                    <span style="width:74px; text-align:right; font-size:12.2px; font-weight:600"><?= $d['students'] ?><span style="color:var(--muted); font-weight:500"> / <?= number_format(GRADE_ENROLLMENT_LIMIT) ?></span></span>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-head bordered">
+            <div>
+                <h2 class="section-title">Senior high by strand</h2>
+                <p class="section-sub">Grade 11–12 learners · limit <?= number_format(STRAND_ENROLLMENT_LIMIT) ?> per strand</p>
+            </div>
+            <span class="pill pill-muted"><span class="pill-dot"></span><?= $shsTotal ?> SHS</span>
+        </div>
+        <div style="padding:18px 22px 8px">
+            <?php if (!$shsTotal): ?>
+                <div class="empty" style="padding:26px"><p>No senior high enrollments for this school year.</p></div>
+            <?php else: ?>
+                <?php foreach ($byStrand as $st => $n): $pct = min(100, (int) round($n / STRAND_ENROLLMENT_LIMIT * 100)); ?>
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:11px">
+                        <span style="width:84px; font-size:12.4px; font-weight:600"><?= e($st) ?></span>
+                        <div class="meter-track" style="flex:1"><div class="meter-fill <?= $pct >= 95 ? 'danger' : ($pct >= 80 ? 'warn' : '') ?>" style="width:<?= $pct ?>%"></div></div>
+                        <span style="width:74px; text-align:right; font-size:12.2px; font-weight:600"><?= $n ?><span style="color:var(--muted); font-weight:500"> / <?= number_format(STRAND_ENROLLMENT_LIMIT) ?></span></span>
+                    </div>
+                <?php endforeach; ?>
+                <?php foreach ($otherStrands as $st => $n): $pct = min(100, (int) round($n / STRAND_ENROLLMENT_LIMIT * 100)); ?>
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:11px">
+                        <span style="width:84px; font-size:12.4px; font-weight:600" title="<?= e($st) ?>"><?= e($st) ?></span>
+                        <div class="meter-track" style="flex:1"><div class="meter-fill warn" style="width:<?= $pct ?>%"></div></div>
+                        <span style="width:74px; text-align:right; font-size:12.2px; font-weight:600"><?= $n ?><span style="color:var(--muted); font-weight:500"> / <?= number_format(STRAND_ENROLLMENT_LIMIT) ?></span></span>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+        <p class="section-sub" style="padding:0 22px 16px">Grades 7–10 are junior high and do not carry a strand.</p>
+    </section>
+</div>
+
+<div class="grid split-2" style="margin-bottom:18px">
+    <section class="card">
         <div class="card-head">
             <div>
                 <h2 class="section-title">Request volume</h2>
@@ -186,6 +286,50 @@ app_header('Reports', 'reports.php');
         </div>
     </section>
 </div>
+
+<section class="card" id="rosters" style="margin-bottom:18px">
+    <div class="card-head bordered">
+        <div>
+            <h2 class="section-title">Class rosters</h2>
+            <p class="section-sub">One printable roster per section — <?= count($rosters) ?> sections for <?= e($activeSy ?: 'all school years') ?></p>
+        </div>
+        <span class="pill pill-muted"><span class="pill-dot"></span><?= count($students) ?> learners</span>
+    </div>
+    <?php if ($rosters): ?>
+        <div class="table-wrap">
+            <table class="data">
+                <thead>
+                <tr><th style="width:60px">#</th><th>Grade</th><th>Strand</th><th>Section</th><th>Students</th><th class="right">Roster</th></tr>
+                </thead>
+                <tbody>
+                <?php foreach ($rosters as $i => $r):
+                    $isShs = in_array($r['grade_level'], ['Grade 11', 'Grade 12'], true);
+                    $rosterLink = '/print_roster.php?' . http_build_query([
+                        'grade' => $r['grade_level'],
+                        'section' => $r['section'],
+                        'strand' => $isShs ? (string) $r['strand'] : '',
+                    ]);
+                ?>
+                    <tr>
+                        <td class="num"><?= $i + 1 ?></td>
+                        <td class="strong"><?= e($r['grade_level']) ?></td>
+                        <td><?= $r['strand'] !== '' ? '<span class="pill pill-muted">' . e($r['strand']) . '</span>' : '<span class="sub">—</span>' ?></td>
+                        <td><?= e($r['section']) ?></td>
+                        <td class="num"><?= (int) $r['n'] ?></td>
+                        <td class="actions">
+                            <a class="btn btn-sm btn-ghost" href="<?= e($rosterLink) ?>" target="_blank" rel="noopener"><?= icon('print') ?> Print roster</a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php else: ?>
+        <div class="empty" style="padding:40px">
+            <p>No sections have been recorded for this school year.</p>
+        </div>
+    <?php endif; ?>
+</section>
 
 <div class="grid split-2">
     <section class="card">
@@ -239,7 +383,7 @@ app_header('Reports', 'reports.php');
                     ?>
                         <tr>
                             <td>
-                                <span class="strong"><?= e(full_name($s)) ?></span>
+                                <span class="strong"><?= e(student_name($s)) ?></span>
                                 <span class="sub mono"><?= e($s['record_code']) ?></span>
                             </td>
                             <td><?= e($s['grade_level']) ?></td>

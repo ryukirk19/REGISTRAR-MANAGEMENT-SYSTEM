@@ -72,6 +72,11 @@ $counts = [
     'followups' => (int) $pdo->query('SELECT COUNT(*) FROM followups')->fetchColumn(),
     'certifications' => (int) $pdo->query('SELECT COUNT(*) FROM certifications')->fetchColumn(),
 ];
+$lastBackupAt = setting('last_backup_at', '');
+$lastBackupFile = setting('last_backup_file', '');
+$lastBackupText = $lastBackupAt !== ''
+    ? fmt_datetime($lastBackupAt) . ($lastBackupFile !== '' ? ' · ' . $lastBackupFile : '')
+    : 'No backup recorded yet';
 
 app_header('Settings', 'settings.php');
 ?>
@@ -177,7 +182,7 @@ app_header('Settings', 'settings.php');
         <section class="card card-pad">
             <h2 class="section-title" style="margin-bottom:14px">My account</h2>
             <dl class="detail-grid" style="grid-template-columns:minmax(0,1fr)">
-                <div class="detail"><dt>Full name</dt><dd><?= e($user['full_name']) ?></dd></div>
+                <div class="detail"><dt>Full name</dt><dd><?= e(account_name($user)) ?></dd></div>
                 <div class="detail"><dt>Username</dt><dd class="mono"><?= e($user['username']) ?></dd></div>
                 <div class="detail"><dt>Role</dt><dd><?= e(role_label($user['role'])) ?></dd></div>
                 <div class="detail"><dt>Email</dt><dd><?= e($user['email'] ?: 'Not set') ?></dd></div>
@@ -190,12 +195,14 @@ app_header('Settings', 'settings.php');
             <div class="mini-row" style="padding:8px 0; border-top:0"><div class="left"><strong>Application</strong><span>REGIS+ v<?= e(APP_VERSION) ?></span></div></div>
             <div class="mini-row" style="padding:8px 0"><div class="left"><strong>Server</strong><span>PHP <?= e(PHP_VERSION) ?> · SQLite <?= e($pdo->query('SELECT sqlite_version()')->fetchColumn()) ?></span></div></div>
             <div class="mini-row" style="padding:8px 0"><div class="left"><strong>Database</strong><span><?= e($dbSizeText) ?> · <?= $counts['students'] ?> students · <?= $counts['credentials'] ?> checklist entries</span></div></div>
+            <div class="mini-row" style="padding:8px 0"><div class="left"><strong>Last backup</strong><span><?= e($lastBackupText) ?></span></div></div>
             <div class="mini-row" style="padding:8px 0"><div class="left"><strong>Activity</strong><span><?= $counts['requests'] ?> requests · <?= $counts['followups'] ?> follow-ups · <?= $counts['certifications'] ?> certificates</span></div></div>
             <?php if (is_admin()): ?>
                 <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
                     <a class="btn btn-ghost btn-sm" href="/audit.php"><?= icon('audit') ?> Audit trail</a>
                     <a class="btn btn-ghost btn-sm" href="/backup.php" data-confirm="Download a copy of the database? Store it only on an authorized device."><?= icon('download') ?> Download backup</a>
                 </div>
+                <p class="sub" style="margin:10px 0 0">Scheduled runs use <span class="mono">tools\backup.cmd</span> and keep the last eight copies under <span class="mono">database\backups</span>.</p>
             <?php endif; ?>
         </section>
 

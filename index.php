@@ -16,7 +16,7 @@ site_header('home');
 <section class="hero">
     <div class="hero-inner">
         <div class="hero-copy">
-            <span class="hero-badge"><b>Proposed system</b> Grade 12 – Versatility · October 2026</span>
+            <span class="hero-badge"><b>Proposed system</b> Grade 12 – Versatility · November 2026</span>
             <h1>Every student record,<br><em>finally within reach.</em></h1>
             <p class="hero-lede">
                 REGIS+ is a registrar records management system that unites the student index, credential
@@ -272,8 +272,8 @@ site_header('home');
     <div class="section-inner">
         <div class="cta-card">
             <div>
-                <h2>Try the working prototype</h2>
-                <p>Sign in with a demo registrar account and walk through the index, tracker, and follow-up log.</p>
+                <h2>Open the registrar workspace</h2>
+                <p>Sign in with your registrar account to manage the student index, document requests, and follow-up log.</p>
             </div>
             <div class="cta-actions">
                 <a class="btn btn-brass btn-lg" href="/login.php">Sign in to REGIS+ <?= icon('arrow-right') ?></a>
