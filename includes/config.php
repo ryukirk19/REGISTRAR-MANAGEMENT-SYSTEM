@@ -12,8 +12,10 @@ const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 15;
 
 define('BASE_PATH', dirname(__DIR__));
-define('DB_FILE', BASE_PATH . '/database/regis.sqlite');
-define('STORAGE_DIR', BASE_PATH . '/storage');
+$dataDir = getenv('REGIS_DATA_DIR');
+define('DATA_DIR', $dataDir !== false && trim($dataDir) !== '' ? rtrim(trim($dataDir), '/\\') : BASE_PATH);
+define('DB_FILE', DATA_DIR . '/database/regis.sqlite');
+define('STORAGE_DIR', DATA_DIR . '/storage');
 define('SCAN_DIR', STORAGE_DIR . '/scans');
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -22,7 +24,8 @@ if (session_status() === PHP_SESSION_NONE) {
         'path' => '/',
         'httponly' => true,
         'samesite' => 'Lax',
-        'secure' => !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off',
+        'secure' => (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+            || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'),
     ]);
     session_name('REGISPLUS');
     session_start();

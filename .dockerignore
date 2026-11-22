@@ -1,0 +1,10 @@
+.git
+.gitignore
+runtime
+database/backups
+database/*.sqlite-wal
+database/*.sqlite-shm
+database/*.sqlite-journal
+storage/scans
+*.log
+tools/*.cmd

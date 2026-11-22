@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: regis-plus
+    runtime: docker
+    plan: starter
+    region: singapore
+    healthCheckPath: /login.php
+    autoDeploy: true
+    envVars:
+      - key: REGIS_DATA_DIR
+        value: /var/data
+      - key: PHP_CLI_SERVER_WORKERS
+        value: "4"
+    disk:
+      name: regis-data
+      mountPath: /var/data
+      sizeGB: 1
